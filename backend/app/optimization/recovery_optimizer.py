@@ -101,13 +101,17 @@ class SupplyChainRecoveryOptimizer:
             for t in range(self.horizon):
                 inv[f_id, t] = solver.NumVar(0.0, infinity, f"inv_{f_id}_{t}")
 
-        # 3. Create Retailer Demand & Shortage Variables
+        # 3. Create Retailer Demand, Backlog & Delivered Variables
+        tot_dem_all = sum(
+            sum(demand_matrix[f.id])
+            for f in self.scenario.facilities
+            if f.facility_type == FacilityType.RETAILER
+        )
         for f in self.scenario.facilities:
             if f.facility_type == FacilityType.RETAILER:
                 for t in range(self.horizon):
-                    dem = demand_matrix[f.id][t]
-                    shortage[f.id, t] = solver.NumVar(0.0, dem, f"shortage_{f.id}_{t}")
-                    delivered[f.id, t] = solver.NumVar(0.0, dem, f"deliv_{f.id}_{t}")
+                    shortage[f.id, t] = solver.NumVar(0.0, tot_dem_all, f"backlog_{f.id}_{t}")
+                    delivered[f.id, t] = solver.NumVar(0.0, tot_dem_all, f"deliv_{f.id}_{t}")
 
         # Constraints Construction
 
@@ -145,7 +149,7 @@ class SupplyChainRecoveryOptimizer:
                     # Shipment dispatched at dispatch_t arrives at dispatch_t + eff_lead
                     inbound_terms: List[Tuple[pywraplp.Variable, float]] = []
                     for in_r in self.incoming_routes[f.id]:
-                        for dispatch_t in range(t):
+                        for dispatch_t in range(t + 1):
                             eff_lead = in_r.lead_time_periods + route_lead_added[in_r.id][dispatch_t]
                             # Integer arrival period approximation (ceil ensures no optimistic premature arrivals)
                             arrival_t = dispatch_t + int(math.ceil(eff_lead))
@@ -164,25 +168,30 @@ class SupplyChainRecoveryOptimizer:
                     for var, coeff in inbound_terms:
                         ct_bal.SetCoefficient(var, -coeff)
 
-        # 6. Retailer Balance & Shortage
+        # 6. Retailer Balance & Backlog Conservation
         for f in self.scenario.facilities:
             if f.facility_type == FacilityType.RETAILER:
                 for t in range(self.horizon):
                     dem = demand_matrix[f.id][t]
 
-                    # Total incoming arrivals at period t
+                    # Total incoming arrivals at period t (including dispatches arriving at or before horizon boundary)
                     inbound_arrivals: List[pywraplp.Variable] = []
                     for in_r in self.incoming_routes[f.id]:
-                        for dispatch_t in range(t):
+                        for dispatch_t in range(self.horizon):
                             eff_lead = in_r.lead_time_periods + route_lead_added[in_r.id][dispatch_t]
-                            arrival_t = dispatch_t + int(math.ceil(eff_lead))
-                            if arrival_t == t:
-                                inbound_arrivals.append(x[in_r.id, dispatch_t])
+                            exact_arr = dispatch_t + eff_lead
+                            if exact_arr <= self.horizon:
+                                arr_idx = min(int(exact_arr), self.horizon - 1)
+                                if arr_idx == t:
+                                    inbound_arrivals.append(x[in_r.id, dispatch_t])
 
-                    # Demand satisfaction: delivered[t] + shortage[t] == dem
-                    ct_dem = solver.Constraint(dem, dem, f"ret_dem_{f.id}_{t}")
-                    ct_dem.SetCoefficient(delivered[f.id, t], 1.0)
-                    ct_dem.SetCoefficient(shortage[f.id, t], 1.0)
+                    # Backlog conservation: backlog[t] - backlog[t-1] + delivered[t] == dem
+                    # i.e. backlog[t] = backlog[t-1] + dem - delivered[t]
+                    ct_backlog = solver.Constraint(dem, dem, f"ret_backlog_{f.id}_{t}")
+                    ct_backlog.SetCoefficient(shortage[f.id, t], 1.0)
+                    if t > 0:
+                        ct_backlog.SetCoefficient(shortage[f.id, t - 1], -1.0)
+                    ct_backlog.SetCoefficient(delivered[f.id, t], 1.0)
 
                     # Retailer inventory conservation:
                     # inv[t] - inv[t-1] + delivered[t] - sum(arrivals) == 0 (with inv[-1] = initial_inv)
@@ -336,9 +345,9 @@ class SupplyChainRecoveryOptimizer:
         # Detect unmet demand shortages causing active bottleneck
         for f in self.scenario.facilities:
             if f.facility_type == FacilityType.RETAILER:
-                tot_shortage = sum(shortage[f.id, t].solution_value() for t in range(self.horizon))
-                if tot_shortage > 1e-3:
-                    bottlenecks.append(f"Unavoidable shortage of {round(tot_shortage, 2)} units at '{f.name}' ({f.id})")
+                final_shortage = shortage[f.id, self.horizon - 1].solution_value()
+                if final_shortage > 1e-3:
+                    bottlenecks.append(f"Unavoidable shortage of {round(final_shortage, 2)} units at '{f.name}' ({f.id})")
 
         rerouted_routes = [r_id for r_id, flow in summary_flow_by_route.items() if flow > 0]
 

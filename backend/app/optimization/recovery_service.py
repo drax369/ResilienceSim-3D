@@ -124,6 +124,11 @@ def execute_recovery_optimization(
             warnings.append(
                 f"Recovered simulation encountered {len(execution_deviations)} execution deviations from proposed plan due to physical capacity bounds."
             )
+
+        if recovered_result.total_delivered_units < disrupted_result.total_delivered_units - 1e-3:
+            warnings.append(
+                f"Recovery degraded throughput: Recovered delivered units ({recovered_result.total_delivered_units}) is lower than unmitigated disrupted deliveries ({disrupted_result.total_delivered_units})."
+            )
     else:
         warnings.append(
             f"Recovery optimization returned status '{solver_status.value}'. No feasible recovery plan could be applied."

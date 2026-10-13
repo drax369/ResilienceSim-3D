@@ -33,9 +33,23 @@ import { DisruptionControlCenter } from './components/DisruptionControlCenter';
 import { SimulationPlaybackControl } from './components/SimulationPlaybackControl';
 import { KpiDashboard } from './components/KpiDashboard';
 import { RecoveryPlanExplainer } from './components/RecoveryPlanExplainer';
+import { useNavigation } from './hooks/useNavigation';
+import { authService } from './services/authService';
+import { LandingPage } from './components/landing/LandingPage';
+import { LoginPage } from './components/auth/LoginPage';
+import { WorkspaceLoadingScreen } from './components/loading/WorkspaceLoadingScreen';
 import './App.css';
 
 export function App() {
+  // Navigation & Authentication
+  const { currentView, navigateTo } = useNavigation();
+  const currentUser = authService.getCurrentUser();
+
+  const handleLogout = () => {
+    authService.logout();
+    navigateTo('landing');
+  };
+
   // System Health
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loadingHealth, setLoadingHealth] = useState<boolean>(true);
@@ -305,6 +319,39 @@ export function App() {
     setOptimizationError(null);
   };
 
+  if (currentView === 'landing') {
+    return (
+      <LandingPage
+        onEnterWorkspace={() => {
+          if (authService.isAuthenticated()) {
+            navigateTo('loading');
+          } else {
+            navigateTo('login');
+          }
+        }}
+        onGoToLogin={() => navigateTo('login')}
+      />
+    );
+  }
+
+  if (currentView === 'login') {
+    return (
+      <LoginPage
+        onLoginSuccess={() => navigateTo('loading')}
+        onBackToHome={() => navigateTo('landing')}
+      />
+    );
+  }
+
+  if (currentView === 'loading') {
+    return (
+      <WorkspaceLoadingScreen
+        onInitializationComplete={() => navigateTo('workspace')}
+        onAbortToLogin={() => navigateTo('login')}
+      />
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Top Navigation */}
@@ -313,6 +360,9 @@ export function App() {
         loadingHealth={loadingHealth}
         onRefreshHealth={fetchHealth}
         onResetSession={handleResetSession}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onNavigateToLanding={() => navigateTo('landing')}
       />
 
       <main className="dashboard-content">

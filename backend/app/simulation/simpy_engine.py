@@ -113,6 +113,17 @@ class SupplyChainSimulationEngine:
         delivered_count = sum(1 for r in self.shipment_records if r.status == ShipmentStatus.DELIVERED)
         in_transit_count = sum(1 for r in self.shipment_records if r.status == ShipmentStatus.IN_TRANSIT)
 
+        # Synchronize period-level delivered metrics with final actual arrivals
+        for p in range(self.horizon):
+            if p < len(self.period_metrics):
+                p_deliv = self.period_delivered.get(p, 0.0)
+                p_req = self.period_metrics[p].requested_demand
+                self.period_metrics[p].delivered_units = round(p_deliv, 3)
+                self.period_metrics[p].unmet_demand = round(max(0.0, p_req - p_deliv), 3)
+                self.period_metrics[p].service_level_pct = round(
+                    max(0.0, min(100.0, (p_deliv / p_req * 100.0) if p_req > 0.0 else 100.0)), 2
+                )
+
         return SimulationResult(
             scenario_id=self.scenario.id,
             simulation_mode=self.mode,
@@ -138,6 +149,9 @@ class SupplyChainSimulationEngine:
     def _master_simulation_process(self):
         """SimPy process stepping through each planning period."""
         for p in range(self.horizon):
+            # Zero-delay yield allows all shipments arriving at timestamp p to deposit
+            # stock into inventory before period p decisions and dispatches are processed.
+            yield self.env.timeout(0)
             self._step_period(p)
             yield self.env.timeout(1.0)
 
@@ -181,6 +195,8 @@ class SupplyChainSimulationEngine:
         if self.recovery_plan is not None:
             # Execute optimizer-guided recovery plan
             decisions = self.recovery_plan.dispatches_by_period.get(period, [])
+            facility_dispatched_in_period: Dict[str, float] = {}
+
             for dec in decisions:
                 r = self.routes[dec.route_id]
                 source_fac = self.facilities[r.source_id]
@@ -196,13 +212,15 @@ class SupplyChainSimulationEngine:
                     r_eff_cap = r.capacity * route_cap_multiplier.get(r.id, 1.0)
                     if source_fac.facility_type in (FacilityType.FACTORY, FacilityType.DISTRIBUTION_CENTER):
                         f_eff_cap = source_fac.processing_capacity * facility_cap_multiplier.get(source_fac.id, 1.0)
+                        remaining_f_cap = max(0.0, f_eff_cap - facility_dispatched_in_period.get(source_fac.id, 0.0))
                     else:
-                        f_eff_cap = float("inf")
-                    actual_qty = min(dec.planned_quantity, avail_stock, r_eff_cap, f_eff_cap)
+                        remaining_f_cap = float("inf")
+                    actual_qty = min(dec.planned_quantity, avail_stock, r_eff_cap, remaining_f_cap)
                     deviation_reason = "Dynamic inventory or throughput limitation"
 
                 if actual_qty > 0.0:
                     self.current_inventory[source_fac.id] -= actual_qty
+                    facility_dispatched_in_period[source_fac.id] = facility_dispatched_in_period.get(source_fac.id, 0.0) + actual_qty
                     if self.facilities[r.target_id].facility_type == FacilityType.RETAILER:
                         self.retailer_backlog[r.target_id] = max(
                             0.0, self.retailer_backlog[r.target_id] - actual_qty

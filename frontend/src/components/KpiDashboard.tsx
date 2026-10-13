@@ -85,13 +85,13 @@ function MultiLineChart({
                   y1={y}
                   x2={width - padding.right}
                   y2={y}
-                  stroke="#e2e8f0"
+                  stroke="var(--chart-grid)"
                   strokeDasharray="3 3"
                 />
                 <text
                   x={padding.left - 8}
                   y={y + 4}
-                  fill="#64748b"
+                  fill="var(--chart-text)"
                   fontSize="10"
                   textAnchor="end"
                   fontFamily="monospace"
@@ -112,7 +112,7 @@ function MultiLineChart({
                 key={i}
                 x={x}
                 y={height - 8}
-                fill="#64748b"
+                fill="var(--chart-text)"
                 fontSize="10"
                 textAnchor="middle"
                 fontFamily="monospace"

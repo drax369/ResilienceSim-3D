@@ -19,6 +19,7 @@ import type {
   GraphResponse,
   ShipmentRecord,
 } from '../types/models';
+import { useTheme } from '../context/ThemeContext';
 
 interface NetworkDigitalTwin3DProps {
   graph: GraphResponse | null;
@@ -325,6 +326,7 @@ export function NetworkDigitalTwin3D({
   disruptedEdgeIds = new Set(),
   activeShipments = [],
 }: NetworkDigitalTwin3DProps) {
+  const { isDark } = useTheme();
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const [showLabels, setShowLabels] = useState(true);
 
@@ -426,9 +428,11 @@ export function NetworkDigitalTwin3D({
           onSelectEdge(null);
         }}
       >
-        <ambientLight intensity={0.85} />
-        <directionalLight position={[20, 40, 30]} intensity={1.1} castShadow />
-        <directionalLight position={[-20, -20, 20]} intensity={0.4} />
+        <color attach="background" args={[isDark ? '#0B1220' : '#F8FAFC']} />
+        <fog attach="fog" args={[isDark ? '#0B1220' : '#F8FAFC', 70, 240]} />
+        <ambientLight intensity={isDark ? 0.75 : 0.9} />
+        <directionalLight position={[20, 40, 30]} intensity={isDark ? 1.2 : 1.1} castShadow />
+        <directionalLight position={[-20, -20, 20]} intensity={isDark ? 0.5 : 0.4} />
 
         <OrbitControls
           ref={controlsRef}
